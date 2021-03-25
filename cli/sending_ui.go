@@ -88,7 +88,7 @@ func printChecks(printer io.Writer, checkGroups [][]api.MessageCheckStatus, prot
 			if !aboutProto {
 				msgName = c.Cid.String()
 			}
-			fmt.Fprintf(printer, "%s message failed a check: %s\n", msgName, c.Err)
+			fmt.Fprintf(printer, "%s message failed a check %s: %s\n", msgName, c.Code, c.Err)
 		}
 	}
 }
@@ -133,7 +133,7 @@ func runFeeCapAdjustmentUI(proto *api.MessagePrototype, baseFee abi.TokenAmount)
 
 	maxFee := big.Mul(proto.Message.GasFeeCap, big.NewInt(proto.Message.GasLimit))
 	send := false
-	t.SetScene(ui(baseFee, proto.Message.GasLimit, &maxFee, &send))
+	t.PushScene(feeUI(baseFee, proto.Message.GasLimit, &maxFee, &send))
 
 	err = t.Run()
 	if err != nil {
@@ -148,7 +148,7 @@ func runFeeCapAdjustmentUI(proto *api.MessagePrototype, baseFee abi.TokenAmount)
 	return proto, nil
 }
 
-func ui(baseFee abi.TokenAmount, gasLimit int64, maxFee *abi.TokenAmount, send *bool) func(*imtui.Tui) error {
+func feeUI(baseFee abi.TokenAmount, gasLimit int64, maxFee *abi.TokenAmount, send *bool) func(*imtui.Tui) error {
 	orignalMaxFee := *maxFee
 	required := big.Mul(baseFee, big.NewInt(gasLimit))
 	safe := big.Mul(required, big.NewInt(10))
@@ -180,7 +180,8 @@ func ui(baseFee abi.TokenAmount, gasLimit int64, maxFee *abi.TokenAmount, send *
 
 			if t.CurrentKey.Key() == tcell.KeyEnter {
 				*send = true
-				return imtui.ErrNormalExit
+				t.PopScene()
+				return nil
 			}
 		}
 
