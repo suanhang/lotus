@@ -14,7 +14,34 @@ import (
 	types "github.com/filecoin-project/lotus/chain/types"
 	"github.com/gdamore/tcell/v2"
 	cid "github.com/ipfs/go-cid"
+	"github.com/urfave/cli/v2"
+	"golang.org/x/xerrors"
 )
+
+func InteractiveSend(ctx context.Context, cctx *cli.Context, srv ServicesAPI,
+	proto *api.MessagePrototype) (cid.Cid, error) {
+
+	msg, checks, err := srv.PublishMessage(ctx, proto, cctx.Bool("force") || cctx.Bool("force-send"))
+	printer := cctx.App.Writer
+	if xerrors.Is(err, ErrCheckFailed) {
+		if !cctx.Bool("interactive") {
+			fmt.Fprintf(printer, "Following checks have failed:\n")
+			printChecks(printer, checks, proto.Message.Cid())
+		} else {
+			proto, err = resolveChecks(ctx, srv, cctx.App.Writer, proto, checks)
+			if err != nil {
+				return cid.Undef, xerrors.Errorf("from UI: %w", err)
+			}
+
+			msg, _, err = srv.PublishMessage(ctx, proto, true)
+		}
+	}
+	if err != nil {
+		return cid.Undef, xerrors.Errorf("publishing message: %w", err)
+	}
+
+	return msg.Cid(), nil
+}
 
 var interactiveSolves = map[api.CheckStatusCode]bool{
 	api.CheckStatusMessageBaseFee:           true,
@@ -42,35 +69,30 @@ func baseFeeFromHints(hint map[string]interface{}) big.Int {
 
 func resolveChecks(ctx context.Context, s ServicesAPI, printer io.Writer,
 	proto *api.MessagePrototype, checkGroups [][]api.MessageCheckStatus,
-	interactive bool) (*api.MessagePrototype, error) {
+) (*api.MessagePrototype, error) {
 
 	fmt.Fprintf(printer, "Following checks have failed:\n")
 	printChecks(printer, checkGroups, proto.Message.Cid())
-	if !interactive {
-		return nil, ErrCheckFailed
-	}
 
-	if interactive {
-		if feeCapBad, baseFee := isFeeCapProblem(checkGroups, proto.Message.Cid()); feeCapBad {
-			fmt.Fprintf(printer, "Fee of the message can be adjusted\n")
-			if askUser(printer, "Do you wish to do that? [Yes/no]: ", true) {
-				var err error
-				proto, err = runFeeCapAdjustmentUI(proto, baseFee)
-				if err != nil {
-					return nil, err
-				}
-			}
-			checks, err := s.RunChecksForPrototype(ctx, proto)
+	if feeCapBad, baseFee := isFeeCapProblem(checkGroups, proto.Message.Cid()); feeCapBad {
+		fmt.Fprintf(printer, "Fee of the message can be adjusted\n")
+		if askUser(printer, "Do you wish to do that? [Yes/no]: ", true) {
+			var err error
+			proto, err = runFeeCapAdjustmentUI(proto, baseFee)
 			if err != nil {
 				return nil, err
 			}
-			fmt.Fprintf(printer, "Following checks still failed:\n")
-			printChecks(printer, checks, proto.Message.Cid())
 		}
+		checks, err := s.RunChecksForPrototype(ctx, proto)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(printer, "Following checks still failed:\n")
+		printChecks(printer, checks, proto.Message.Cid())
+	}
 
-		if !askUser(printer, "Do you wish to send this message? [yes/No]: ", false) {
-			return nil, ErrAbortedByUser
-		}
+	if !askUser(printer, "Do you wish to send this message? [yes/No]: ", false) {
+		return nil, ErrAbortedByUser
 	}
 	return proto, nil
 }
